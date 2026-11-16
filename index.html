@@ -137,6 +137,12 @@ h3{font-size:15px;margin:0 0 8px;font-weight:700}
 .toolbar input{flex:1 1 240px;min-width:0}
 .toolbar .count{font-size:13px;color:var(--muted);margin-left:auto}
 .tbl-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.modal{position:fixed;inset:0;background:rgba(10,16,24,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+.modal[hidden]{display:none}
+.mbox{background:var(--surface);color:var(--ink);border-radius:14px;max-width:1240px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.mhead{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line)}
+.mhead h2{margin:0;font-size:18px}.mhead .hint{flex:1;min-width:160px}
+.mbox .tbl-wrap{overflow:auto;flex:1}
 table.data{width:100%;border-collapse:collapse;font-size:13.5px;min-width:1050px}
 td.age{text-align:right;font-weight:600;color:var(--muted)}
 td.age.open{color:var(--hl-ink);font-weight:800}
@@ -298,6 +304,12 @@ td.nowrap{white-space:nowrap}
   <div class="pager"><button id="prev" type="button">Previous</button><span id="pinfo"></span><button id="next" type="button">Next</button></div>
 </main>
 </div>
+
+<div class="modal" id="gModal" hidden role="dialog" aria-modal="true" aria-labelledby="gTitle"><div class="mbox">
+  <div class="mhead"><h2 id="gTitle"></h2><span class="hint" id="gSub"></span>
+    <button class="btn export-ui" type="button" id="gExport">Export to Excel</button><button class="btn ghost" type="button" id="gClose">Close</button></div>
+  <div class="tbl-wrap"><table class="data" id="gTable" style="min-width:980px"></table></div>
+</div></div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
@@ -511,6 +523,23 @@ function groupRows(){
   open.forEach(r=>{const g=r.grp||"(none)"; (m[g]=m[g]||[]).push(r);});
   return Object.entries(m).map(([g,rows])=>({g,rows,tot:rows.length,old:Math.max(...rows.map(r=>r.age))})).sort((a,b)=>b.tot-a.tot||a.g.localeCompare(b.g));
 }
+let GSEL=null;
+function groupTickets(g){ return R.filter(r=>r.open&&(g===null||(r.grp||"(none)")===g)).sort((a,b)=>a.date<b.date?-1:1); }
+function showGroup(g){
+  GSEL=g; const rows=groupTickets(g), code=k=>(agencies.find(a=>a.k===k)||{code:k}).code;
+  $("gTitle").textContent=g===null?"All open requests by support group":g;
+  $("gSub").textContent=`${fmt(rows.length)} open requests, oldest first. Days open are business days.`;
+  $("gTable").innerHTML=`<thead><tr><th>ID</th><th>Created</th><th>Days open</th><th>Agency</th>${g===null?"<th>Support group</th>":""}<th>Title</th><th>Category</th><th>Status</th><th>Assigned to</th></tr></thead><tbody>`+
+    rows.map(r=>`<tr><td><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.id)}</a></td><td class="nowrap">${niceDate(r.date)}</td><td class="nowrap"><b>${fmt(r.age)}</b> days</td><td>${esc(code(r.ag))}</td>${g===null?`<td>${esc(r.grp||"(none)")}</td>`:""}<td class="title"><div title="${esc(r.title)}">${esc(r.title||"(no title)")}</div></td><td>${esc(r.cls)}</td><td><span class="pill open">${esc(r.status)}</span></td><td>${esc(r.asg)}</td></tr>`).join("")+`</tbody>`;
+  $("gModal").hidden=false; document.body.style.overflow="hidden"; $("gClose").focus();
+}
+function closeGroup(){ $("gModal").hidden=true; document.body.style.overflow=""; }
+$("gClose").addEventListener("click",closeGroup);
+$("gModal").addEventListener("click",e=>{ if(e.target===$("gModal")) closeGroup(); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&!$("gModal").hidden) closeGroup(); });
+$("gExport").addEventListener("click",e=>withBusy(e.currentTarget,()=>{
+  const rows=groupTickets(GSEL), nm=GSEL===null?"All-Support-Groups":GSEL.replace(/[^A-Za-z0-9]+/g,"-").replace(/^-|-$/g,"");
+  return exportRows(rows,`Agency-Requests_${nm}_as-of-${endD}`,{title:GSEL===null?"All open requests by support group":`Open requests: ${GSEL}`,subtitle:`As of ${niceDate(endD)} \u00b7 ${fmt(rows.length)} requests open, oldest first`,tables:[]},false);}));
 function renderGroups(){
   const open=R.filter(r=>r.open), has=open.some(r=>r.grp);
   $("grpPanel").hidden=!has; if(!has) return;
@@ -518,9 +547,10 @@ function renderGroups(){
   $("groups").innerHTML=`<thead><tr><th>Support group</th>${agencies.map(a=>`<th>${esc(a.code)}</th>`).join("")}<th>Total open</th><th>Oldest<br><span class="sub">days open</span></th></tr></thead><tbody>`+
     gr.map(x=>`<tr><td>${esc(x.g)}</td>`+agencies.map(a=>{const n=x.rows.filter(r=>r.ag===a.k).length;
       return n&&x.g!=="(none)"?`<td><button type="button" class="cellbtn" data-ag="${esc(a.k)}" data-g="${esc(x.g)}">${fmt(n)}</button></td>`:`<td>${fmt(n)}</td>`;}).join("")+
-      `<td><b>${fmt(x.tot)}</b></td><td>${fmt(x.old)}</td></tr>`).join("")+
-    `</tbody><tfoot><tr><td>All support groups</td>${agencies.map(a=>`<td>${fmt(open.filter(r=>r.ag===a.k).length)}</td>`).join("")}<td>${fmt(open.length)}</td><td>${fmt(Math.max(...open.map(r=>r.age)))}</td></tr></tfoot>`;
-  $("groups").querySelectorAll(".cellbtn").forEach(b=>b.addEventListener("click",()=>goGroup(b.dataset.ag,b.dataset.g)));
+      `<td><button type="button" class="cellbtn gtot" data-g="${esc(x.g)}"><b>${fmt(x.tot)}</b></button></td><td>${fmt(x.old)}</td></tr>`).join("")+
+    `</tbody><tfoot><tr><td>All support groups</td>${agencies.map(a=>`<td>${fmt(open.filter(r=>r.ag===a.k).length)}</td>`).join("")}<td><button type="button" class="cellbtn gtot" data-all="1"><b>${fmt(open.length)}</b></button></td><td>${fmt(Math.max(...open.map(r=>r.age)))}</td></tr></tfoot>`;
+  $("groups").querySelectorAll(".cellbtn:not(.gtot)").forEach(b=>b.addEventListener("click",()=>goGroup(b.dataset.ag,b.dataset.g)));
+  $("groups").querySelectorAll(".gtot").forEach(b=>b.addEventListener("click",()=>showGroup(b.dataset.all?null:b.dataset.g)));
   $("grpNote").textContent=`${fmt(gr.length)} support groups. Select a number to see those requests.`;
 }
 function renderOpenWeeks(){
@@ -740,8 +770,10 @@ function buildSummarySheet(wb,spec){
     if(tb.title){const r=ws.addRow([tb.title]); r.getCell(1).font={bold:true,size:12,color:{argb:XI}}; r.height=20;}
     styleHeader(ws,ws.addRow(tb.head),tb.head.length);
     tb.body.forEach((row,i)=>{const rr=ws.addRow(row); styleBody(ws,rr,tb.head.length,i%2===1,2);
+      if(tb.links&&tb.links[i]){const c=rr.getCell(tb.linkCol+1); c.value={text:String(row[tb.linkCol]),hyperlink:"#'"+tb.links[i]+"'!A1"}; c.font={bold:true,underline:true,color:{argb:XHLINK}};}
       if(tb.fills&&tb.fills[i]) rr.getCell(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:tb.fills[i]}};});
-    if(tb.total) styleTotal(ws,ws.addRow(tb.total),tb.head.length);
+    if(tb.total){ const tr=ws.addRow(tb.total); styleTotal(ws,tr,tb.head.length);
+      if(tb.totalLink){const c=tr.getCell(tb.linkCol+1); c.value={text:String(tb.total[tb.linkCol]),hyperlink:"#'"+tb.totalLink+"'!A1"}; c.font={bold:true,underline:true,color:{argb:XHLINK}};} }
     (tb.notes||[]).forEach(n=>{const r=ws.addRow([n]); ws.mergeCells(r.number,1,r.number,Math.max(2,tb.head.length));
       r.getCell(1).font={italic:true,size:10,color:{argb:XMUTED}}; r.getCell(1).alignment={wrapText:true,vertical:"top"};});
     ws.addRow([]);
@@ -812,6 +844,11 @@ async function exportRows(rows,base,spec,perAgency){
     const X=await loadExcelJS(), wb=new X.Workbook();
     wb.creator="Harris County Universal Services"; wb.created=new Date();
     buildSummarySheet(wb,spec); buildRequestsSheet(wb,rows,perAgency?"All Agencies":"Requests");
+    if(spec.groupTabs) spec.groupTabs.forEach(g=>{
+      const ws=buildRequestsSheet(wb,g.rows,g.sheet,true);
+      const c=ws.getCell(1,HEAD.length+2); c.value={text:"\u2190 Back to Summary",hyperlink:"#'Summary'!A1"}; c.font={bold:true,underline:true,color:{argb:XHLINK}};
+      ws.getColumn(HEAD.length+2).width=22;
+    });
     if(perAgency) agencies.forEach(a=>{
       const sub=R.filter(r=>r.open&&r.ag===a.k).sort((x,y)=>x.date<y.date?-1:1);
       const nm=String(a.code).replace(/[\\\/\?\*\[\]:]/g,"").slice(0,24)+" ("+sub.length+")";
@@ -859,6 +896,14 @@ function weekCompareTable(){
     notes:[`${weekTag(ws)} (${longRange(ws)}): ${fmt(tot[2])} still open. ${fmt(tot[1])} more are still open from ${weekTag(ps)} and ${fmt(tot[4])} from earlier weeks.`,
            "Only open requests are in the extract. Counts fall as the Help Desk closes tickets."]};
 }
+function groupTable(rows){
+  const ags=agencies.filter(a=>rows.some(r=>r.ag===a.k)), m={};
+  rows.forEach(r=>{const g=r.grp||"(none)"; (m[g]=m[g]||[]).push(r);});
+  const list=Object.entries(m).sort((a,b)=>b[1].length-a[1].length||a[0].localeCompare(b[0]));
+  return {title:"Open requests by support group",head:["Support group",...ags.map(a=>a.code),"Total open"],
+    body:list.map(([g,rs])=>[g,...ags.map(a=>rs.filter(r=>r.ag===a.k).length),rs.length]),
+    total:["All support groups",...ags.map(a=>rows.filter(r=>r.ag===a.k).length),rows.length]};
+}
 function backlogTable(){
   const ws=S.week, we=addDays(ws,7), open=R.filter(r=>r.open);
   const w1=addDays(ws,-7), m1=addDays(ws,-30), y1=addDays(ws,-365);
@@ -878,7 +923,7 @@ function agencySpec(rows,title){
       body:agencies.map(a=>{const r=rows.filter(x=>x.ag===a.k);
         return [a.name,r.length,r.filter(x=>x.type!=="Incident").length,r.filter(x=>x.type==="Incident").length];}),
       total:["All agencies",rows.length,rows.filter(x=>x.type!=="Incident").length,rows.filter(x=>x.type==="Incident").length]},
-    backlogTable()]};
+    backlogTable(), groupTable(rows)]};
 }
 
 /* ---------- UPDATE DATA from a new Service Manager export ---------- */
@@ -974,6 +1019,7 @@ $("exCarry").addEventListener("click",e=>withBusy(e.currentTarget,()=>{
     tables:[
       weekCompareTable(),
       backlogTable(),
+      groupTable(rows),
       bucketLegend(),
       {title:"Carried-over items by when they were opened",head:["Opened",...agencies.map(a=>a.code),"All agencies"],
        body:[["From last week",addDays(S.week,-7),S.week],["From last month",addDays(S.week,-30),addDays(S.week,-7)],
@@ -984,18 +1030,24 @@ $("exCarry").addEventListener("click",e=>withBusy(e.currentTarget,()=>{
   return exportRows(rows,`Agency-Requests_Carried-Over_as-of-${endD}`,spec,true);}));
 $("exGroup").addEventListener("click",e=>withBusy(e.currentTarget,()=>{
   const rows=R.filter(r=>r.open).sort((a,b)=>(a.grp||"~").localeCompare(b.grp||"~")||(a.date<b.date?-1:1)), gr=groupRows();
+  const used=new Set(["Summary","Requests"]), tabs=gr.map(x=>{
+    let base=x.g.replace(/[\\\/\?\*\[\]:]/g,"").trim().slice(0,31)||"Group", nm=base, n=2;
+    while(used.has(nm.toLowerCase())||used.has(nm)){ nm=base.slice(0,28)+" "+n++; }
+    used.add(nm); used.add(nm.toLowerCase()); return {sheet:nm,rows:x.rows.slice().sort((a,b)=>a.date<b.date?-1:1)};});
   const spec={title:"Open service requests by support group",
-    subtitle:`As of ${niceDate(endD)} \u00b7 ${fmt(rows.length)} requests open \u00b7 ${fmt(gr.length)} support groups`,
+    subtitle:`As of ${niceDate(endD)} \u00b7 ${fmt(rows.length)} requests open \u00b7 ${fmt(gr.length)} support groups. Select a Total open number to jump to that group's tickets.`,
+    groupTabs:tabs,
     tables:[{title:"Open requests by support group",head:["Support group",...agencies.map(a=>a.code),"Total open","Oldest (days open)"],
+      linkCol:agencies.length+1, links:tabs.map(t=>t.sheet), totalLink:"Requests",
       body:gr.map(x=>[x.g,...agencies.map(a=>x.rows.filter(r=>r.ag===a.k).length),x.tot,x.old]),
       total:["All support groups",...agencies.map(a=>rows.filter(r=>r.ag===a.k).length),rows.length,Math.max(...rows.map(r=>ageDays(r)))]}]};
-  return exportRows(rows,`Agency-Requests_By-Support-Group_as-of-${endD}`,spec,true);}));
+  return exportRows(rows,`Agency-Requests_By-Support-Group_as-of-${endD}`,spec,false);}));
 $("exOld").addEventListener("click",e=>withBusy(e.currentTarget,()=>{
   const rows=R.filter(r=>r.open).sort((a,b)=>a.date<b.date?-1:1);
   const band=[[0,10],[11,30],[31,90],[91,1e9]], lab=["0-10 days","11-30 days","31-90 days","Over 90 days"];
   const spec={title:"Oldest open service requests",
     subtitle:`As of ${niceDate(endD)} · ${fmt(rows.length)} requests still open, oldest first`,
-    tables:[backlogTable(), bucketLegend(),
+    tables:[backlogTable(), groupTable(rows), bucketLegend(),
       {title:"Days open (business days)",
       head:["Age","All agencies",...agencies.map(a=>a.code)],
       body:band.map((b,i)=>{const sel=rows.filter(r=>ageDays(r)>=b[0]&&ageDays(r)<=b[1]);
@@ -1008,7 +1060,7 @@ function exportOpenAll(){
   const wk=Object.keys(openByWeek).sort().reverse();
   const spec={title:"Open service requests by week opened",
     subtitle:`As of ${niceDate(endD)} \u00b7 ${fmt(rows.length)} requests open`,
-    tables:[backlogTable(), bucketLegend(),
+    tables:[backlogTable(), groupTable(rows), bucketLegend(),
       {title:"By week opened", head:["Week opened","Open requests",...agencies.map(a=>a.code)],
        body:wk.map(w=>[longRange(w),openByWeek[w].length,...agencies.map(a=>openByWeek[w].filter(r=>r.ag===a.k).length)]),
        total:["All weeks",rows.length,...agencies.map(a=>rows.filter(r=>r.ag===a.k).length)]}]};
@@ -1026,7 +1078,7 @@ $("exDetail").addEventListener("click",e=>withBusy(e.currentTarget,()=>{
       ["Incidents",rows.filter(r=>r.type==="Incident").length]],
     tables:[{title:"Top categories",head:["Category","Open requests"],
       body:count(rows,"cls").slice(0,10).map(([c,n])=>[c,n])},
-      backlogTable()]};
+      backlogTable(), groupTable(rows)]};
   const base=`${a.code.replace(/\s+/g,"-")}_${S.scope==="week"?"Week_"+fileRange(S.week):S.scope==="post"?weekTag(addDays(S.week,7)).replace(" ","-")+"-so-far":S.scope==="carry"?"Carried-Over":"All-Open"}${filt!=="None"?"_Filtered":""}`;
   return exportRows(rows,base,spec);}));
 
